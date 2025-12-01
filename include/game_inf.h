@@ -15,7 +15,7 @@
 #define CHAR_TRAP 'X'
 /* ------------------------ char of target and player ----------------------- */
 #define CHAR_TARGET 'O'
-#define CHAR_BODY '◆'
+#define CHAR_BODY '@'
 #define CHAR_UP '^'
 #define CHAR_RIGHT '>'
 #define CHAR_DOWN 'v'
@@ -83,7 +83,18 @@ typedef struct
     Field field;
     char name[MAX_NAME];
     int score;
+    int heart_left;
+    int level;
 } Game;
+
+enum GameStatus{
+    GAME_NOT_START, // map is initialized, waiting for player to enter key
+    GAME_PLAYING, // player playing
+    GAME_ROUND_FINISHED, // player saved a target, init map needed
+    GAME_FINISHED, // player hit wall or trap, init player's position, do not re generate map
+    GAME_OVER // player run out of hearts.
+};
+
 
 
 #endif

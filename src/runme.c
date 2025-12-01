@@ -7,9 +7,10 @@
 int YMAX;
 int XMAX;
 Player player;
-Position trap_list[15]; // stores all traps in the map
-int manual_mode = 1;    // 1 for manual, 0 for AI control
-int playing = 1;        // set to 0 to break the main game loop
+PosList trap_list;                            // stores all traps in the map
+int manual_mode = 1;                          // 1 for manual, 0 for AI control
+int playing = 1;                              // set to 0 to break the main game loop
+enum GameStatus game_status = GAME_NOT_START; // set 0 to pause the game(not moving until player entered a key)
 
 /* -------------------------------------------------------------------------- */
 /*                         declar function prototypes                         */
@@ -20,12 +21,17 @@ int check_around(Game *game, int x, int y, int r, enum ElementType element);
 int check_pos(Game *game, int x, int y, enum ElementType element);
 int is_near_existing_trap(int x, int y, int r);
 /* -------------------------------- game gen -------------------------------- */
+void init_map(Game *game);
 void gen_trap(Game *game);
 void gen_wall(Game *game);
 void gen_people(Game *game);
 /* --------------------------- interaction control -------------------------- */
+void respawn_player();
+void player_hit_wall(Game *game);
+void player_saved_target(Game *game);
 void handle_input(Game *game);
 void move_robot(Game *game);
+void move_result(Game *game);
 /* ---------------------------- drawing elements ---------------------------- */
 void draw_border(Game *game);
 void draw_player(Game *game);
@@ -40,29 +46,36 @@ int main(void)
     noecho();
     keypad(stdscr, TRUE);
     curs_set(0);
+    nodelay(stdscr, TRUE);
 
     /* ----------------------------- Initialise Game ---------------------------- */
     Game game;
     memset(&game, 0, sizeof(Game));
-    init_game(&game);   // sets field size, creates WINDOW, draws box
+    init_game(&game); // sets field size, creates WINDOW, draws box
+    nodelay(game.field.window, TRUE);
+    keypad(game.field.window, TRUE);
     draw_border(&game); // draws the border directly on stdscr too
 
     mvprintw(1, 2, "Draw Arena. Press any key to quit.");
 
-    gen_trap(&game);
-    gen_wall(&game);
-    gen_people(&game);
-    for (int i = 0; i < 3; ++i)
+    init_map(&game);
+    while (playing)
     {
         draw_map(&game);
         draw_player(&game);
+        handle_input(&game);
+        if (game_status == GAME_PLAYING)
+        {
+            move_robot(&game);
+            move_result(&game);
+        }
         refresh();
         wrefresh(game.field.window);
 
         // Wait for a key press
-        getch();
-        player.position.y += 1;
+
         werase(game.field.window);
+        usleep(100000); // 100ms
     }
 
     if (game.field.window != NULL)
@@ -85,21 +98,25 @@ WINDOW *init_game(Game *game)
     int start_y = (ymax - BOARD_ROWS) / 2;
     int start_x = (xmax - BOARD_COLS) / 2;
 
+    /* --------------------------- initialize the game -------------------------- */
     game->field.rows = BOARD_ROWS;
     game->field.cols = BOARD_COLS;
+    game->heart_left = 4;
+    game->score = 0;
+    game->level = 1;
 
     game->field.window = newwin(BOARD_ROWS, BOARD_COLS, start_y, start_x);
 
     /* -------------------- initialize all blocks into floor. ------------------- */
-    for (int y = 0; y < BOARD_ROWS; ++y)
-    {
-        for (int x = 0; x < BOARD_COLS; ++x)
-        {
-            game->field.map[y][x].position.x = x;
-            game->field.map[y][x].position.y = y;
-            game->field.map[y][x].element_type = ELE_FLOOR;
-        }
-    }
+    // for (int y = 0; y < BOARD_ROWS; ++y)
+    // {
+    //     for (int x = 0; x < BOARD_COLS; ++x)
+    //     {
+    //         game->field.map[y][x].position.x = x;
+    //         game->field.map[y][x].position.y = y;
+    //         game->field.map[y][x].element_type = ELE_FLOOR;
+    //     }
+    // }
 
     // Simple border inside the window
     // box(game->field.window, 0, 0);
@@ -121,6 +138,37 @@ WINDOW *init_game(Game *game)
     player.position.y = 10;
 
     return game->field.window;
+}
+
+// set all grid into floor, generate the wall, trap, and target
+void init_map(Game *game)
+{
+    /* ------------------------- set all grid into floor ------------------------ */
+    for (int y = 0; y < BOARD_ROWS; ++y)
+    {
+        for (int x = 0; x < BOARD_COLS; ++x)
+        {
+            game->field.map[y][x].position.x = x;
+            game->field.map[y][x].position.y = y;
+            game->field.map[y][x].element_type = ELE_FLOOR;
+        }
+    }
+
+    player.position.x = 10;
+    player.position.y = 10;
+
+    gen_wall(game);
+    gen_trap(game);
+    gen_people(game);
+    game_status = GAME_NOT_START;
+}
+
+// respawn the player, do not regenerate map
+void respawn_player()
+{
+    player.position.x = 10;
+    player.position.y = 10;
+    game_status = GAME_NOT_START;
 }
 
 // Draw border directly on stdscr
@@ -152,6 +200,7 @@ void draw_border(Game *game)
     mvaddch(start_y + game->field.rows + 1, start_x, ACS_LLCORNER);
     mvaddch(start_y + game->field.rows + 1, start_x + game->field.cols + 1, ACS_LRCORNER);
 }
+
 // draw the player
 void draw_player(Game *game)
 {
@@ -159,11 +208,12 @@ void draw_player(Game *game)
     mvwaddch(game->field.window,
              player.position.y,
              player.position.x,
-             '@'); // draw the body
+             CHAR_BODY); // draw the body
     mvwaddch(
         game->field.window,
         player.position.y + pos_shift[player.facing_direction][0],
-        player.position.x + pos_shift[player.facing_direction][1], HEAD_ARROWS[player.facing_direction]); // draw the head
+        player.position.x + pos_shift[player.facing_direction][1],
+        HEAD_ARROWS[player.facing_direction]); // draw the head
 
     wattroff(game->field.window, COLOR_PAIR(CP_PLAYER));
 }
@@ -195,9 +245,12 @@ void draw_map(Game *game)
 void gen_trap(Game *game)
 {
     int num = random_range(5, 10); // number of traps
+
+    pos_list_init(&trap_list);
+    Position current_pos = {player.position.x, player.position.y};
+
     // the first "trap" is player's initial position. so trap will not be generated on the player or block the way
-    trap_list[0].x = player.position.x;
-    trap_list[0].y = player.position.y;
+    pos_list_push(&trap_list, current_pos);
 
     while (num)
     {
@@ -211,26 +264,28 @@ void gen_trap(Game *game)
             x = random_range(1, game->field.cols - 1);
         }
         /* ------------------------- add the trap into list ------------------------- */
-        trap_list[num].x = x;
-        trap_list[num].y = y;
+        current_pos.x = x;
+        current_pos.y = y;
+        pos_list_push(&trap_list, current_pos);
         /* ------------------------- add the trap to the map ------------------------ */
         game->field.map[y][x].element_type = ELE_TRAP;
 
         // minus one count
         num--;
     }
+    pos_list_free(&trap_list);
 }
 
 // check if there's a trap near.
 int is_near_existing_trap(int x, int y, int r)
 {
-    for (int i = 0; i < 15; ++i)
+    for (int i = 0; i < trap_list.size; ++i)
     {
-        if (trap_list[i].x == 0)
+        if (trap_list.data[i].x == 0)
             continue;
 
-        int dx = abs(trap_list[i].x - x);
-        int dy = abs(trap_list[i].y - y);
+        int dx = abs(trap_list.data[i].x - x);
+        int dy = abs(trap_list.data[i].y - y);
 
         if (dx <= r && dy <= r)
             return 1;
@@ -269,7 +324,7 @@ void gen_people(Game *game)
     int x = random_range(1, game->field.cols - 1);
     int y = random_range(1, game->field.rows - 1);
 
-    while (check_around(game, x, y, 1, ELE_TRAP) || check_around(game, x, y, 1, ELE_WALL)) // check if there's no other trap close to it
+    while (check_around(game, x, y, 1, ELE_TRAP) || check_around(game, x, y, 1, ELE_WALL) || abs(player.position.x - x) < 5 || abs(player.position.y - y) < 5) // check if there's no other trap close to it
     {
         x = random_range(1, game->field.cols - 1);
         y = random_range(1, game->field.rows - 1);
@@ -298,7 +353,7 @@ void gen_wall(Game *game)
 // handle user's input
 void handle_input(Game *game)
 {
-    char ch = getch();
+    int ch = wgetch(game->field.window);
 
     switch (ch)
     {
@@ -312,15 +367,19 @@ void handle_input(Game *game)
         /* ------------------------------ movement part ----------------------------- */
     case KEY_UP:
         player.facing_direction = UP;
+        game_status = GAME_PLAYING;
         break;
     case KEY_RIGHT:
         player.facing_direction = RIGHT;
+        game_status = GAME_PLAYING;
         break;
     case KEY_DOWN:
         player.facing_direction = DOWN;
+        game_status = GAME_PLAYING;
         break;
     case KEY_LEFT:
         player.facing_direction = LEFT;
+        game_status = GAME_PLAYING;
         break;
 
     default:
@@ -329,5 +388,33 @@ void handle_input(Game *game)
 }
 
 // move the player
+void move_robot(Game *game)
+{
+    // calculate the new position
+    int newy = player.position.y + pos_shift[player.facing_direction][0];
+    int newx = player.position.x + pos_shift[player.facing_direction][1];
 
+    // just move the player
+    player.position.x = newx;
+    player.position.y = newy;
+}
 
+// check if player still alive or saved a target
+void move_result(Game *game)
+{
+    Position pos = player.position;
+    // if still alive
+    if (check_pos(game, pos.x, pos.y, ELE_FLOOR))
+    {
+        return;
+    }
+    // dead
+    if (check_pos(game, pos.x, pos.y, ELE_WALL) || check_pos(game, pos.x, pos.y, ELE_TRAP))
+    {
+        game_status = GAME_FINISHED;
+    }
+    if (check_pos(game, pos.x, pos.y, ELE_TARGET))
+    {
+        game_status = GAME_ROUND_FINISHED;
+    }
+}

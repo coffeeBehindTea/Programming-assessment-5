@@ -40,6 +40,7 @@ void ai_control(Game *game);
 void draw_border(Game *game);
 void draw_player(Game *game);
 void draw_map(Game *game);
+void draw_path(Game *game, PositionQueue *path);
 
 int main(void)
 {
@@ -77,6 +78,8 @@ int main(void)
 
         /* ----------------- draw the map and get the player's input ---------------- */
         draw_map(&game);
+        if (!pos_queue_is_empty(&path) && ai_enabled)
+            draw_path(&game, &path);
         draw_player(&game);
         handle_input(&game);
 
@@ -153,6 +156,7 @@ WINDOW *init_game(Game *game)
     init_pair(CP_WALL, COLOR_CYAN, COLOR_BLACK);
     init_pair(CP_TRAP, COLOR_RED, COLOR_BLACK);
     init_pair(CP_TARGET, COLOR_WHITE, COLOR_MAGENTA);
+    init_pair(CP_PATH, COLOR_YELLOW, COLOR_YELLOW);
 
     /* ---------------------------- initialize player --------------------------- */
     player.facing_direction = RIGHT;
@@ -540,7 +544,6 @@ int bfs_find_path(Game *game, PositionQueue *path)
     if (target.x == -1)
         return 0; // 没找到路
 
-
     // 正向存入 path
     Position stack[BOARD_ROWS * BOARD_COLS];
     int len = 0;
@@ -595,3 +598,24 @@ void ai_control(Game *game)
     player.facing_direction =
         direction_from_to(player.position, next);
 }
+
+void draw_path(Game *game, PositionQueue *path)
+{
+    wattron(game->field.window, COLOR_PAIR(CP_PATH));
+
+    for (int i = 0; i < path->size-1; ++i)
+    {
+        Position p = path->data[(path->front + i) % path->capacity];
+
+        // 不覆盖玩家自己
+        if (p.x == player.position.x && p.y == player.position.y)
+            continue;
+
+        mvwaddch(game->field.window, p.y, p.x, ' ');
+    }
+
+    wattroff(game->field.window, COLOR_PAIR(CP_PATH));
+}
+
+
+

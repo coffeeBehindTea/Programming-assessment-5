@@ -48,6 +48,7 @@ enum ColorPairID {
     CP_TARGET,
     CP_TRAP,
     CP_HEART,
+    CP_PATH,
 
     COLOR_PAIR_COUNT
 };

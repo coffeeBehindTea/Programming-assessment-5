@@ -6,6 +6,7 @@
 // --------- Global Variables --------
 int YMAX;
 int XMAX;
+int delay = 150000; // 150ms
 Player player;
 PosList trap_list; // stores all traps in the map
 PositionQueue path;
@@ -41,6 +42,7 @@ void draw_border(Game *game);
 void draw_player(Game *game);
 void draw_map(Game *game);
 void draw_path(Game *game, PositionQueue *path);
+void draw_status_bar(Game *game);
 
 int main(void)
 {
@@ -81,6 +83,7 @@ int main(void)
         if (!pos_queue_is_empty(&path) && ai_enabled)
             draw_path(&game, &path);
         draw_player(&game);
+        draw_status_bar(&game);
         handle_input(&game);
 
         /* ---------------------------- control the robot --------------------------- */
@@ -100,7 +103,7 @@ int main(void)
         // Wait for a key press
 
         werase(game.field.window);
-        usleep(100000); // 100ms
+        usleep(delay); // 100ms
     }
 
     if (game.field.window != NULL)
@@ -128,7 +131,7 @@ WINDOW *init_game(Game *game)
     game->field.cols = BOARD_COLS;
     game->heart_left = 4;
     game->score = 0;
-    game->level = 1;
+    game->level = 0;
 
     game->field.window = newwin(BOARD_ROWS, BOARD_COLS, start_y, start_x);
 
@@ -184,6 +187,8 @@ void init_map(Game *game)
     player.position.y = 10;
     player.facing_direction = RIGHT;
 
+    if (game_status == GAME_ROUND_FINISHED)
+        game->level++;
     gen_wall(game);
     gen_trap(game);
     gen_people(game);
@@ -194,6 +199,19 @@ void init_map(Game *game)
         ai_start(game);
         game_status = GAME_PLAYING;
     }
+
+    if (game->level < 3)
+        delay = 150000;
+    else if (game->level < 6)
+        delay = 120000;
+    else if (game->level < 9)
+        delay = 90000;
+    else if (game->level < 12)
+        delay = 70000;
+    else if (game->level < 20)
+        delay = 50000;
+    else
+        delay = 10000;
 }
 
 // respawn the player, do not regenerate map
@@ -293,7 +311,7 @@ void draw_map(Game *game)
 // generate the traps
 void gen_trap(Game *game)
 {
-    int num = random_range(5, 10); // number of traps
+    int num = MIN(5 + game->level * 2, 50); // number of traps
 
     pos_list_init(&trap_list);
     Position current_pos = {player.position.x, player.position.y};
@@ -307,7 +325,7 @@ void gen_trap(Game *game)
         int y = random_range(1, game->field.rows - 1);
         int x = random_range(1, game->field.cols - 1);
 
-        while (is_near_existing_trap(x, y, 2)) // check if there's no other trap close to it
+        while (is_near_existing_trap(x, y, 1)) // check if there's no other trap close to it
         {
             y = random_range(1, game->field.rows - 1);
             x = random_range(1, game->field.cols - 1);
@@ -603,7 +621,7 @@ void draw_path(Game *game, PositionQueue *path)
 {
     wattron(game->field.window, COLOR_PAIR(CP_PATH));
 
-    for (int i = 0; i < path->size-1; ++i)
+    for (int i = 0; i < path->size - 1; ++i)
     {
         Position p = path->data[(path->front + i) % path->capacity];
 
@@ -617,5 +635,38 @@ void draw_path(Game *game, PositionQueue *path)
     wattroff(game->field.window, COLOR_PAIR(CP_PATH));
 }
 
+void draw_status_bar(Game *game)
+{
 
+    int start_y = (YMAX - game->field.rows) / 2 - 2;
+    int start_x = (XMAX - game->field.cols) / 2;
 
+    // 清除整行
+    mvhline(start_y, start_x, ' ', game->field.cols);
+
+    // 玩家名
+    mvprintw(start_y, start_x, "Player: %s", game->name);
+
+    // 生命值（爱心显示）
+    mvprintw(start_y, start_x + 20, "HP: ");
+    attron(COLOR_PAIR(CP_HEART));
+    for (int i = 0; i < game->heart_left; ++i)
+    {
+        printw("@ ");
+    }
+    attroff(COLOR_PAIR(CP_HEART));
+
+    // 关卡
+    mvprintw(start_y, start_x + game->field.cols - 12, "LEVEL %d", game->level);
+
+    // info of status
+    start_y = YMAX - (YMAX - game->field.rows) / 2 + 1;
+
+    mvhline(start_y, start_x, ' ', game->field.cols);
+
+    mvprintw(start_y, start_x, "ai mode: %s", ai_enabled ? " on" : "off");
+
+    mvprintw(start_y, start_x + game->field.cols - 19, "number of trap: %d", MIN(5 + game->level * 2, 50));
+
+    mvprintw(start_y, start_x + game->field.cols - 45, "Speed: %dms", delay / 1000);
+}

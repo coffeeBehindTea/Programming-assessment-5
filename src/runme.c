@@ -67,7 +67,7 @@ int main(void)
     keypad(game.field.window, TRUE);
     draw_border(&game); // draws the border directly on stdscr too
 
-    mvprintw(1, 2, "Draw Arena. Press any key to quit.");
+    // mvprintw(1, 2, "Draw Arena. Press any key to quit.");
 
     init_map(&game);
     while (playing)

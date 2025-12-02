@@ -7,8 +7,9 @@
 int YMAX;
 int XMAX;
 Player player;
-PosList trap_list;                            // stores all traps in the map
-int manual_mode = 1;                          // 1 for manual, 0 for AI control
+PosList trap_list; // stores all traps in the map
+PositionQueue path;
+int ai_enabled = 0;
 int playing = 1;                              // set to 0 to break the main game loop
 enum GameStatus game_status = GAME_NOT_START; // set 0 to pause the game(not moving until player entered a key)
 
@@ -20,6 +21,7 @@ WINDOW *init_game(Game *game);
 int check_around(Game *game, int x, int y, int r, enum ElementType element);
 int check_pos(Game *game, int x, int y, enum ElementType element);
 int is_near_existing_trap(int x, int y, int r);
+int bfs_find_path(Game *game, PositionQueue *path);
 /* -------------------------------- game gen -------------------------------- */
 void init_map(Game *game);
 void gen_trap(Game *game);
@@ -28,10 +30,12 @@ void gen_people(Game *game);
 /* --------------------------- interaction control -------------------------- */
 void respawn_player();
 void player_hit_wall(Game *game);
-void player_saved_target(Game *game);
 void handle_input(Game *game);
 void move_robot(Game *game);
 void move_result(Game *game);
+enum PlayerDirection direction_from_to(Position from, Position to);
+void ai_start(Game *game);
+void ai_control(Game *game);
 /* ---------------------------- drawing elements ---------------------------- */
 void draw_border(Game *game);
 void draw_player(Game *game);
@@ -61,6 +65,7 @@ int main(void)
     init_map(&game);
     while (playing)
     {
+        /* ---------------------------- game flow control --------------------------- */
         if (game_status == GAME_NOT_START || game_status == GAME_ROUND_FINISHED) // before each round
         {
             init_map(&game);
@@ -70,11 +75,19 @@ int main(void)
             playing = 0;
         }
 
+        /* ----------------- draw the map and get the player's input ---------------- */
         draw_map(&game);
         draw_player(&game);
         handle_input(&game);
+
+        /* ---------------------------- control the robot --------------------------- */
+
         if (game_status == GAME_PLAYING)
         {
+            if (ai_enabled)
+            {
+                ai_control(&game);
+            }
             move_robot(&game);
             move_result(&game);
         }
@@ -171,6 +184,12 @@ void init_map(Game *game)
     gen_trap(game);
     gen_people(game);
     game_status = GAME_ROUND_READY;
+
+    if (ai_enabled) // also init ai when new round started
+    {
+        ai_start(game);
+        game_status = GAME_PLAYING;
+    }
 }
 
 // respawn the player, do not regenerate map
@@ -388,25 +407,42 @@ void handle_input(Game *game)
         playing = 0; // quit the game
         break;
     case 'm':
-        manual_mode = manual_mode ^ 1; //
+        ai_enabled = ai_enabled ^ 1;
+        if (ai_enabled)
+        {
+            ai_start(game); // find the path and take over the control.
+            game_status = GAME_PLAYING;
+        }
         break;
         /* ------------------------------ movement part ----------------------------- */
     case KEY_UP:
-        player.facing_direction = UP;
-        game_status = GAME_PLAYING;
-        break;
+        if (!ai_enabled)
+        {
+            player.facing_direction = UP;
+            game_status = GAME_PLAYING;
+            break;
+        }
     case KEY_RIGHT:
-        player.facing_direction = RIGHT;
-        game_status = GAME_PLAYING;
-        break;
+        if (!ai_enabled)
+        {
+            player.facing_direction = RIGHT;
+            game_status = GAME_PLAYING;
+            break;
+        }
     case KEY_DOWN:
-        player.facing_direction = DOWN;
-        game_status = GAME_PLAYING;
-        break;
+        if (!ai_enabled)
+        {
+            player.facing_direction = DOWN;
+            game_status = GAME_PLAYING;
+            break;
+        }
     case KEY_LEFT:
-        player.facing_direction = LEFT;
-        game_status = GAME_PLAYING;
-        break;
+        if (!ai_enabled)
+        {
+            player.facing_direction = LEFT;
+            game_status = GAME_PLAYING;
+            break;
+        }
 
     default:
         break;
@@ -417,8 +453,8 @@ void handle_input(Game *game)
 void move_robot(Game *game)
 {
     // calculate the new position
-    int newy = player.position.y + pos_shift[player.facing_direction][0];
-    int newx = player.position.x + pos_shift[player.facing_direction][1];
+    int newy = CLAMP(player.position.y + pos_shift[player.facing_direction][0], 0, game->field.rows - 1);
+    int newx = CLAMP(player.position.x + pos_shift[player.facing_direction][1], 0, game->field.cols - 1);
 
     // just move the player
     player.position.x = newx;
@@ -443,4 +479,119 @@ void move_result(Game *game)
     {
         game_status = GAME_ROUND_FINISHED;
     }
+}
+
+int bfs_find_path(Game *game, PositionQueue *path)
+{
+    int rows = game->field.rows;
+    int cols = game->field.cols;
+
+    int visited[BOARD_ROWS][BOARD_COLS] = {0};
+    Position prev[BOARD_ROWS][BOARD_COLS];
+
+    PositionQueue q;
+    pos_queue_init(&q, 64);
+
+    Position start = player.position;
+    pos_queue_push(&q, start);
+    visited[start.y][start.x] = 1;
+
+    Position target = {-1, -1};
+
+    // 方向偏移
+    int dx[4] = {0, 1, 0, -1};
+    int dy[4] = {-1, 0, 1, 0};
+
+    while (!pos_queue_is_empty(&q))
+    {
+        Position cur = pos_queue_pop(&q);
+
+        // 若找到目标
+        if (game->field.map[cur.y][cur.x].element_type == ELE_TARGET)
+        {
+            target = cur;
+            break;
+        }
+
+        // 扩散
+        for (int d = 0; d < 4; ++d)
+        {
+            int nx = cur.x + dx[d];
+            int ny = cur.y + dy[d];
+
+            if (nx < 0 || ny < 0 || nx >= cols || ny >= rows)
+                continue;
+
+            if (visited[ny][nx])
+                continue;
+
+            if (!can_walk(game, nx, ny))
+                continue;
+
+            visited[ny][nx] = 1;
+            prev[ny][nx] = cur;
+
+            pos_queue_push(&q, (Position){nx, ny});
+        }
+    }
+
+    pos_queue_free(&q);
+
+    if (target.x == -1)
+        return 0; // 没找到路
+
+
+    // 正向存入 path
+    Position stack[BOARD_ROWS * BOARD_COLS];
+    int len = 0;
+
+    Position cur = target;
+
+    // 从 target 回溯到 start
+    while (!(cur.x == start.x && cur.y == start.y))
+    {
+        stack[len++] = cur;
+        cur = prev[cur.y][cur.x];
+    }
+
+    // 反向入队列：start → target
+    pos_queue_init(path, len);
+
+    for (int i = len - 1; i >= 0; --i)
+    {
+        pos_queue_push(path, stack[i]);
+    }
+
+    return 1;
+}
+
+enum PlayerDirection direction_from_to(Position from, Position to)
+{
+    if (to.x == from.x && to.y == from.y - 1)
+        return UP;
+    if (to.x == from.x && to.y == from.y + 1)
+        return DOWN;
+    if (to.x == from.x - 1 && to.y == from.y)
+        return LEFT;
+    if (to.x == from.x + 1 && to.y == from.y)
+        return RIGHT;
+
+    return player.facing_direction; // fallback
+}
+
+void ai_start(Game *game)
+{
+    pos_queue_free(&path);
+    bfs_find_path(game, &path);
+}
+
+void ai_control(Game *game)
+{
+    if (pos_queue_is_empty(&path))
+        return;
+
+    Position next = pos_queue_pop(&path);
+
+    player.facing_direction =
+        direction_from_to(player.position, next);
 }

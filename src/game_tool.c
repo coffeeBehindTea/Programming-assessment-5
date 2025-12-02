@@ -146,5 +146,114 @@ int can_walk(Game *game, int x, int y)
 
 
 
+void ensure_save_folder()
+{
+    struct stat st = {0};
 
+    if (stat("saves", &st) == -1)
+    {
+        mkdir("saves", 0755); // create folder with full admin
+    }
+}
+
+void get_save_path(const char *player, char *out)
+{
+    sprintf(out, "saves/%s.txt", player);
+}
+
+int load_player_record(const char *player)
+{
+    char path[256];
+    get_save_path(player, path);
+
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+
+    int level = 0;
+    fscanf(f, "%d", &level);
+    fclose(f);
+
+    return level;
+}
+
+void save_player_record(const char *player, int new_level)
+{
+    char path[256];
+    get_save_path(player, path);
+
+    int old = load_player_record(player);
+
+    if (new_level <= old) return;
+
+    FILE *f = fopen(path, "w");
+    if (!f) return;
+
+    fprintf(f, "%d", new_level);
+    fclose(f);
+}
+
+int load_all_records(Record *list, int max)
+{
+    DIR *dir = opendir("saves");
+    if (!dir) return 0;
+
+    struct dirent *ent; // saves
+    int count = 0;
+    char path[512];
+
+    while ((ent = readdir(dir)) != NULL && count < max)
+    {
+        // skip "." and ".."
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
+            continue;
+
+        // build full path "saves/filename"
+        snprintf(path, sizeof(path), "saves/%s", ent->d_name);
+
+        // use stat to check it's a regular file
+        struct stat st;
+        if (stat(path, &st) == -1)
+            continue;
+        if (!S_ISREG(st.st_mode))
+            continue;
+
+        // only accept .txt files (case-sensitive). skip others.
+        size_t len = strlen(ent->d_name);
+        if (len < 5) // at least "a.txt"
+            continue;
+        if (strcmp(ent->d_name + len - 4, ".txt") != 0)
+            continue;
+
+        // read the level integer from the file
+        FILE *f = fopen(path, "r");
+        if (!f) continue;
+
+        int level = 0;
+        if (fscanf(f, "%d", &level) != 1)
+        {
+            fclose(f);
+            continue;
+        }
+        fclose(f);
+
+        // copy name without .txt extension into list[count].name
+        strncpy(list[count].name, ent->d_name, MAX_NAME - 1);
+        list[count].name[MAX_NAME - 1] = '\0';
+        char *dot = strrchr(list[count].name, '.');
+        if (dot) *dot = '\0';
+
+        list[count].level = level;
+        count++;
+    }
+
+    closedir(dir);
+    return count;
+}
+
+int cmp_record(const void *a, const void *b)
+{
+    Record *ra = (Record *)a;
+    Record *rb = (Record *)b;
+    return rb->level - ra->level;
+}
 

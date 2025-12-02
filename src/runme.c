@@ -24,6 +24,7 @@ int check_pos(Game *game, int x, int y, enum ElementType element);
 int is_near_existing_trap(int x, int y, int r);
 int bfs_find_path(Game *game, PositionQueue *path);
 /* -------------------------------- game gen -------------------------------- */
+void show_start_screen(char *name_buf);
 void init_map(Game *game);
 void gen_trap(Game *game);
 void gen_wall(Game *game);
@@ -48,16 +49,19 @@ int main(void)
 {
     /* --------------------------- Initialise ncurses --------------------------- */
     initscr();
+    ensure_save_folder();
     start_color();
     cbreak();
     noecho();
     keypad(stdscr, TRUE);
     curs_set(0);
-    nodelay(stdscr, TRUE);
-
+    nodelay(stdscr, FALSE);
+    
     /* ----------------------------- Initialise Game ---------------------------- */
     Game game;
     memset(&game, 0, sizeof(Game));
+    show_start_screen(game.name);
+    nodelay(stdscr, TRUE);
     init_game(&game); // sets field size, creates WINDOW, draws box
     nodelay(game.field.window, TRUE);
     keypad(game.field.window, TRUE);
@@ -75,19 +79,18 @@ int main(void)
         }
         if (game_status == GAME_OVER)
         {
-            playing = 0;
+            break;
         }
-
+        
         /* ----------------- draw the map and get the player's input ---------------- */
         draw_map(&game);
         if (!pos_queue_is_empty(&path) && ai_enabled)
-            draw_path(&game, &path);
+        draw_path(&game, &path);
         draw_player(&game);
         draw_status_bar(&game);
         handle_input(&game);
-
+        
         /* ---------------------------- control the robot --------------------------- */
-
         if (game_status == GAME_PLAYING)
         {
             if (ai_enabled)
@@ -97,19 +100,22 @@ int main(void)
             move_robot(&game);
             move_result(&game);
         }
+
+        /* --------------- refresh the window and delay between frames -------------- */
         refresh();
         wrefresh(game.field.window);
-
-        // Wait for a key press
-
         werase(game.field.window);
         usleep(delay); // 100ms
     }
+
+    /* ------------------------------- game over! ------------------------------- */
+    show_scoreboard(&game);
 
     if (game.field.window != NULL)
     {
         delwin(game.field.window);
     }
+
     endwin();
     return 0;
 }
@@ -503,8 +509,10 @@ void move_result(Game *game)
     }
 }
 
+// BFS
 int bfs_find_path(Game *game, PositionQueue *path)
 {
+    /* -------------------------- initialize variables -------------------------- */
     int rows = game->field.rows;
     int cols = game->field.cols;
 
@@ -520,22 +528,23 @@ int bfs_find_path(Game *game, PositionQueue *path)
 
     Position target = {-1, -1};
 
-    // 方向偏移
+    // direction shift
     int dx[4] = {0, 1, 0, -1};
     int dy[4] = {-1, 0, 1, 0};
 
+    /* ------------------------------ the main loop ----------------------------- */
     while (!pos_queue_is_empty(&q))
     {
         Position cur = pos_queue_pop(&q);
 
-        // 若找到目标
+        // check if target found
         if (game->field.map[cur.y][cur.x].element_type == ELE_TARGET)
         {
             target = cur;
             break;
         }
 
-        // 扩散
+        // spread out
         for (int d = 0; d < 4; ++d)
         {
             int nx = cur.x + dx[d];
@@ -557,10 +566,11 @@ int bfs_find_path(Game *game, PositionQueue *path)
         }
     }
 
+    // free space used
     pos_queue_free(&q);
 
     if (target.x == -1)
-        return 0; // 没找到路
+        return 0; // no path found
 
     // 正向存入 path
     Position stack[BOARD_ROWS * BOARD_COLS];
@@ -568,14 +578,14 @@ int bfs_find_path(Game *game, PositionQueue *path)
 
     Position cur = target;
 
-    // 从 target 回溯到 start
+    // from target back to start
     while (!(cur.x == start.x && cur.y == start.y))
     {
         stack[len++] = cur;
         cur = prev[cur.y][cur.x];
     }
 
-    // 反向入队列：start → target
+    // add into path: start → target
     pos_queue_init(path, len);
 
     for (int i = len - 1; i >= 0; --i)
@@ -586,6 +596,7 @@ int bfs_find_path(Game *game, PositionQueue *path)
     return 1;
 }
 
+// get the direction that robot need to go next
 enum PlayerDirection direction_from_to(Position from, Position to)
 {
     if (to.x == from.x && to.y == from.y - 1)
@@ -600,12 +611,15 @@ enum PlayerDirection direction_from_to(Position from, Position to)
     return player.facing_direction; // fallback
 }
 
+/* ----------------------------- AI control utls ---------------------------- */
+// initialize the variable and find path
 void ai_start(Game *game)
 {
     pos_queue_free(&path);
     bfs_find_path(game, &path);
 }
 
+// ai contorl
 void ai_control(Game *game)
 {
     if (pos_queue_is_empty(&path))
@@ -617,15 +631,16 @@ void ai_control(Game *game)
         direction_from_to(player.position, next);
 }
 
+// draw path found
 void draw_path(Game *game, PositionQueue *path)
 {
     wattron(game->field.window, COLOR_PAIR(CP_PATH));
 
-    for (int i = 0; i < path->size - 1; ++i)
+    for (int i = 0; i < path->size - 1; ++i) // size - 1, so do not cover target
     {
         Position p = path->data[(path->front + i) % path->capacity];
 
-        // 不覆盖玩家自己
+        // skip player's current position
         if (p.x == player.position.x && p.y == player.position.y)
             continue;
 
@@ -635,19 +650,21 @@ void draw_path(Game *game, PositionQueue *path)
     wattroff(game->field.window, COLOR_PAIR(CP_PATH));
 }
 
+/* --------------------------------- UI part -------------------------------- */
+// draw status bar
 void draw_status_bar(Game *game)
 {
 
     int start_y = (YMAX - game->field.rows) / 2 - 2;
     int start_x = (XMAX - game->field.cols) / 2;
 
-    // 清除整行
+    // clear the line
     mvhline(start_y, start_x, ' ', game->field.cols);
 
-    // 玩家名
+    // player's name
     mvprintw(start_y, start_x, "Player: %s", game->name);
 
-    // 生命值（爱心显示）
+    // HP
     mvprintw(start_y, start_x + 20, "HP: ");
     attron(COLOR_PAIR(CP_HEART));
     for (int i = 0; i < game->heart_left; ++i)
@@ -656,10 +673,10 @@ void draw_status_bar(Game *game)
     }
     attroff(COLOR_PAIR(CP_HEART));
 
-    // 关卡
+    // level
     mvprintw(start_y, start_x + game->field.cols - 12, "LEVEL %d", game->level);
 
-    // info of status
+    // info
     start_y = YMAX - (YMAX - game->field.rows) / 2 + 1;
 
     mvhline(start_y, start_x, ' ', game->field.cols);
@@ -670,3 +687,88 @@ void draw_status_bar(Game *game)
 
     mvprintw(start_y, start_x + game->field.cols - 45, "Speed: %dms", delay / 1000);
 }
+
+// the start screen
+void show_start_screen(char *name_buf)
+{
+    clear();
+
+    int ymax, xmax;
+    getmaxyx(stdscr, ymax, xmax);
+
+    int base_y = ymax / 2 - 10;
+    int base_x = xmax / 2 - 35;
+
+    /* ========================= title ========================= */
+    attron(A_BOLD);
+    mvprintw(base_y, base_x, "=== ROBOT ESCAPE ===");
+    attroff(A_BOLD);
+
+    /* ====================== game goal ======================= */
+    mvprintw(base_y + 2, base_x, "Game Objective:");
+    mvprintw(base_y + 3, base_x, "  Reach the target before hitting traps or walls.");
+
+    /* ====================== how to play ======================= */
+    mvprintw(base_y + 5, base_x, "Controls:");
+    mvprintw(base_y + 6, base_x, "  Arrow Keys  - Move robot");
+    mvprintw(base_y + 7, base_x, "  M           - Toggle AI mode");
+    mvprintw(base_y + 8, base_x, "  Q           - Quit game");
+
+    /* ===================== elements ====================== */
+    mvprintw(base_y + 10, base_x, "Game Elements:");
+    mvprintw(base_y + 11, base_x, "  @  - Player");
+    mvprintw(base_y + 12, base_x, "  #  - Wall");
+    mvprintw(base_y + 13, base_x, "  X  - Trap");
+    mvprintw(base_y + 14, base_x, "  O  - Target");
+    mvprintw(base_y + 15, base_x, "  Yellow path - AI planned route");
+
+    /* ===================== enter name ====================== */
+    mvprintw(base_y + 18, base_x, "Enter your name: ");
+    echo();                              // 打开回显
+    curs_set(1);                         // 开启光标
+    getnstr(name_buf, MAX_NAME - 1);     // 输入名字
+    noecho();
+    curs_set(0);
+
+    /* ===================== get to start ====================== */
+    mvprintw(base_y + 20, base_x, "Press any key to start...");
+    refresh();
+    getch();
+
+    clear();
+    refresh();
+}
+
+// the end screen when player run out of life or quit the game
+void show_scoreboard(Game *game)
+{
+    clear();
+    nodelay(stdscr, FALSE);
+
+    ensure_save_folder(); // ensure again
+    save_player_record(game->name, game->level);
+
+    Record list[128];
+    int count = load_all_records(list, 128);
+
+    qsort(list, count, sizeof(Record), cmp_record); // get sort
+
+    /* -------------------------- show the ranking list ------------------------- */
+    int y = 5;
+    mvprintw(2, 10, "=== GAME OVER ===");
+    mvprintw(3, 10, "Your Record: Level %d", game->level);
+
+    mvprintw(5, 10, "TOP 10 PLAYERS");
+
+    for (int i = 0; i < count && i < 10; ++i)
+    {
+        mvprintw(y + i, 10, "%2d. %-12s Level %d", i + 1, list[i].name, list[i].level);
+    }
+
+    mvprintw(y + 12, 10, "Press any key to exit...");
+    refresh();
+    getch();
+}
+
+
+

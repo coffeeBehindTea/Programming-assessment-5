@@ -1,5 +1,11 @@
 #include <stdlib.h>
 #include <ncurses.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <string.h>
+#include <stdio.h>
+
+#include <errno.h>
 #include "game_inf.h"
 
 #ifndef GAME_TOOL_H
@@ -8,6 +14,27 @@
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define CLAMP(v,l,h) (MAX((l), MIN((v),(h))))
+
+
+typedef struct {
+    char name[MAX_NAME];
+    int level;
+} Record;
+
+// ensure the folder exist
+void ensure_save_folder();
+
+void get_save_path(const char *player, char *out);
+
+int load_player_record(const char *player);
+
+void save_player_record(const char *player, int new_level);
+
+int load_all_records(Record *list, int max);
+
+int cmp_record(const void *a, const void *b);
+
+
 
 typedef struct {
     Position *data;

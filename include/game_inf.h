@@ -88,7 +88,8 @@ typedef struct
 } Game;
 
 enum GameStatus{
-    GAME_NOT_START, // map is initialized, waiting for player to enter key
+    GAME_NOT_START, // initialize the map, regenerate wall, trap, target
+    GAME_ROUND_READY,
     GAME_PLAYING, // player playing
     GAME_ROUND_FINISHED, // player saved a target, init map needed
     GAME_FINISHED, // player hit wall or trap, init player's position, do not re generate map

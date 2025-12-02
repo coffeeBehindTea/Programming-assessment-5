@@ -61,6 +61,15 @@ int main(void)
     init_map(&game);
     while (playing)
     {
+        if (game_status == GAME_NOT_START || game_status == GAME_ROUND_FINISHED) // before each round
+        {
+            init_map(&game);
+        }
+        if (game_status == GAME_OVER)
+        {
+            playing = 0;
+        }
+
         draw_map(&game);
         draw_player(&game);
         handle_input(&game);
@@ -156,11 +165,12 @@ void init_map(Game *game)
 
     player.position.x = 10;
     player.position.y = 10;
+    player.facing_direction = RIGHT;
 
     gen_wall(game);
     gen_trap(game);
     gen_people(game);
-    game_status = GAME_NOT_START;
+    game_status = GAME_ROUND_READY;
 }
 
 // respawn the player, do not regenerate map
@@ -168,7 +178,23 @@ void respawn_player()
 {
     player.position.x = 10;
     player.position.y = 10;
+    player.facing_direction = RIGHT;
     game_status = GAME_NOT_START;
+}
+
+// handle when player hit wall
+void player_hit_wall(Game *game)
+{
+    game->heart_left -= 1;
+    if (game->heart_left)
+    {
+        respawn_player();
+        game_status = GAME_ROUND_READY;
+    }
+    else
+    {
+        game_status = GAME_OVER;
+    }
 }
 
 // Draw border directly on stdscr
@@ -408,10 +434,10 @@ void move_result(Game *game)
     {
         return;
     }
-    // dead
+    // hit wall
     if (check_pos(game, pos.x, pos.y, ELE_WALL) || check_pos(game, pos.x, pos.y, ELE_TRAP))
     {
-        game_status = GAME_FINISHED;
+        player_hit_wall(game);
     }
     if (check_pos(game, pos.x, pos.y, ELE_TARGET))
     {
